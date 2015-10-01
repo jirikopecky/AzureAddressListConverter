@@ -1,19 +1,20 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
+using static System.Console;
 
 namespace AzureAddressListConverter
 {
-    class Program
+    internal class Program
     {
-        static void Main(string[] args)
+        private const int MaxRulesPerCsvFile = 135;
+
+        public static void Main(string[] args)
         {
             if (args.Length != 1)
             {
@@ -26,7 +27,7 @@ namespace AzureAddressListConverter
                 Usage("Specified file does not exists");
             }
 
-            XDocument document = null;
+            XDocument document;
             using (var stream = File.Open(args[0], FileMode.Open, FileAccess.Read))
             using (var reader = XmlReader.Create(stream))
             {
@@ -37,23 +38,36 @@ namespace AzureAddressListConverter
 
             if (addresses == null)
             {
-                Console.Error.WriteLine("ERROR: Wrong input file format! Missing AzurePublicIpAddresses as root element.");
+                Error.WriteLine("ERROR: Wrong input file format! Missing AzurePublicIpAddresses as root element.");
                 return;
             }
+
+            var inputFile = Path.GetFileNameWithoutExtension(args[0]);
+            var outputDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Path.GetTempPath();
+
+            WriteLine("Creating CSV files from XML file {0}.", inputFile);
+            WriteLine("CSV record count limit: {0}", MaxRulesPerCsvFile);
+            WriteLine("Output directory: {0}", outputDir);
+            WriteLine();
 
             foreach (var region in addresses.Elements("Region"))
             {
                 var regionName = region.Attribute("Name")?.Value;
 
-                var rangeGroups = region.Elements("IpRange").Select(((element, i) => new {Group = i/150, Value = element}))
+                WriteRegionStatus(regionName, "Processing...");
+
+                var rangeGroups = region.Elements("IpRange").Select(((element, i) => new {Group = i/MaxRulesPerCsvFile, Value = element}))
                     .GroupBy(item => item.Group, item => item.Value);
 
                 int counter = 0;
+                int fileCounter = 0;
 
                 foreach (var group in rangeGroups)
                 {
-                    var regionFileName = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Path.GetTempPath(),
-                    $"PublicIPs_{regionName}_{group.Key}.csv");
+                    var outputFile = $"{inputFile}_{regionName}_{group.Key}.csv";
+                    WriteRegionStatus(regionName, $"=> {outputFile}", ConsoleColor.Blue);
+
+                    var regionFileName = Path.Combine(outputDir, outputFile);
 
                     using (var file = File.Open(regionFileName, FileMode.Create, FileAccess.Write, FileShare.None))
                     using (var writer = new StreamWriter(file, Encoding.ASCII))
@@ -70,13 +84,16 @@ namespace AzureAddressListConverter
                             counter++;
                         }
                     }
+
+                    fileCounter++;
                 }
 
-                Console.WriteLine("Region {0}: {1} address ranges", regionName, counter);
+                WriteRegionStatus(regionName, $"Finished: {counter} address ranges ({fileCounter} file(s))", ConsoleColor.DarkGreen);
+                WriteLine();
             }
-
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey();
+            
+            //WriteLine("Press any key to continue...");
+            //ReadKey();
         }
 
         private static void Usage(string reason = null)
@@ -85,17 +102,32 @@ namespace AzureAddressListConverter
 
             if (reason != null)
             {
-                Console.WriteLine("ERROR!");
-                Console.WriteLine();
-                Console.WriteLine(reason);
-                Console.WriteLine();
+                WriteLine("ERROR!");
+                WriteLine();
+                WriteLine(reason);
+                WriteLine();
             }
 
-            Console.WriteLine("Usage:");
-            Console.WriteLine();
-            Console.WriteLine("\t{0} azure-ips.xml", exeName);
-            Console.WriteLine();
-            Console.WriteLine("\tazure-ips.xml - The publicly available list of Azure address ranges");
+            WriteLine("Usage:");
+            WriteLine();
+            WriteLine("\t{0} azure-ips.xml", exeName);
+            WriteLine();
+            WriteLine("\tazure-ips.xml - The publicly available list of Azure address ranges");
+        }
+
+        private static void WriteRegionStatus(string regionName, string statusText, ConsoleColor? color = null)
+        {
+            var origColor = ForegroundColor;
+            ForegroundColor = ConsoleColor.DarkYellow;
+            Write("[{0}] ", regionName);
+
+            ForegroundColor = color ?? origColor;
+            WriteLine(statusText);
+
+            if (color.HasValue)
+            {
+                ForegroundColor = origColor;
+            }
         }
     }
 }
